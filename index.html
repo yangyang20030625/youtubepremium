@@ -186,12 +186,40 @@
             border-radius: 8px;
             display: flex;
             flex-direction: column;
-            gap: 4px;
+            gap: 6px;
         }
 
         .detail-row {
             display: flex;
             justify-content: space-between;
+            align-items: center;
+        }
+
+        .member-note-row {
+            margin-top: 4px;
+            padding-top: 6px;
+            border-top: 1px dashed var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .note-text {
+            color: #6c757d;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+
+        .btn-edit-note {
+            background: none;
+            border: none;
+            color: var(--info-blue);
+            font-size: 0.75rem;
+            cursor: pointer;
+            padding: 0;
+            text-decoration: underline;
+            white-space: nowrap;
         }
 
         .pay-btn {
@@ -209,52 +237,6 @@
         .pay-btn.paid {
             background-color: #e6f4ea;
             color: var(--success-green);
-        }
-
-        /* 獨立備註區樣式 */
-        .global-note-card {
-            background: var(--card-bg);
-            padding: 16px;
-            border-radius: 12px;
-            margin-top: 16px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
-            border-left: 4px solid var(--info-blue);
-        }
-
-        .note-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 8px;
-        }
-
-        .note-title {
-            font-size: 0.95rem;
-            font-weight: bold;
-            color: var(--text-main);
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .edit-note-btn {
-            background: none;
-            border: none;
-            color: var(--info-blue);
-            font-size: 0.8rem;
-            cursor: pointer;
-            text-decoration: underline;
-        }
-
-        .note-content {
-            font-size: 0.88rem;
-            color: #495057;
-            white-space: pre-wrap;
-            line-height: 1.5;
-            background: var(--bg-color);
-            padding: 10px;
-            border-radius: 8px;
-            min-height: 40px;
         }
 
         /* Modal 彈窗樣式 */
@@ -361,15 +343,6 @@
     <div class="member-list" id="member-container">
         <!-- 成員清單由 JS 動態生成 -->
     </div>
-
-    <!-- 獨立備註欄（全域公告欄） -->
-    <div class="global-note-card">
-        <div class="note-header">
-            <span class="note-title">📌 備註與注意事項</span>
-            <button class="edit-note-btn" onclick="openNoteModal()">✏️ 編輯備註</button>
-        </div>
-        <div class="note-content" id="global-note-display">尚未設定備註事項。</div>
-    </div>
 </div>
 
 <!-- 繳費資料輸入 Modal -->
@@ -399,23 +372,23 @@
     </div>
 </div>
 
-<!-- 編輯獨立備註 Modal -->
+<!-- 編輯成員個人備註 Modal -->
 <div class="modal-overlay" id="modal-note-overlay">
     <div class="modal">
-        <h3>編輯獨立備註</h3>
+        <h3 id="note-modal-title">編輯個人備註</h3>
         <label>
-            內容（例如：轉帳帳號、繳費提醒等）
-            <textarea id="input-global-note" rows="5" placeholder="請輸入備註內容..."></textarea>
+            備註內容
+            <textarea id="input-member-note" rows="4" placeholder="例：常使用 LinePay、轉帳後五碼 12345..."></textarea>
         </label>
         <div class="modal-actions">
-            <button class="btn-cancel" onclick="closeNoteModal()">取消</button>
-            <button class="btn-confirm" onclick="saveGlobalNote()">儲存備註</button>
+            <button class="btn-cancel" onclick="closeMemberNoteModal()">取消</button>
+            <button class="btn-confirm" onclick="saveMemberNote()">儲存備註</button>
         </div>
     </div>
 </div>
 
 <script>
-    // 預設密碼設定
+    // 預設密碼設定 (可自訂)
     const ADMIN_PASSWORD = "1234";
     let isAdmin = false;
 
@@ -429,6 +402,7 @@
 
     let currentDate = new Date();
     let activeMemberId = null;
+    let activeNoteMemberId = null;
 
     function formatDate(date) {
         const y = date.getFullYear();
@@ -439,6 +413,10 @@
 
     function getAllRecords() {
         return JSON.parse(localStorage.getItem('yt_global_records')) || [];
+    }
+
+    function getMemberNotes() {
+        return JSON.parse(localStorage.getItem('yt_member_notes')) || {};
     }
 
     function getMemberPaymentStatusForMonth(memberId, year, month) {
@@ -496,10 +474,12 @@
         container.innerHTML = '';
 
         let paidCount = 0;
+        const allNotes = getMemberNotes();
 
         members.forEach(member => {
             const activeRecord = getMemberPaymentStatusForMonth(member.id, viewYear, viewMonth);
             const isPaid = !!activeRecord;
+            const noteText = allNotes[member.id] || '無';
 
             if (isPaid) paidCount++;
 
@@ -512,28 +492,27 @@
                         ${isPaid ? '✓ 已繳費' : '尚未繳費'}
                     </button>
                 </div>
-                ${isPaid ? `
-                    <div class="card-details">
+                <div class="card-details">
+                    ${isPaid ? `
                         <div class="detail-row"><span>實際繳費日期：</span><strong>${activeRecord.payDate}</strong></div>
                         <div class="detail-row"><span>實繳金額：</span><strong>NT$ ${activeRecord.amount}</strong></div>
                         <div class="detail-row"><span>方案起算日期：</span><strong>${activeRecord.startDate}</strong></div>
                         <div class="detail-row"><span>方案結束日期：</span><strong style="color: var(--success-green);">${activeRecord.endDate}</strong></div>
-                    </div>
-                ` : `
-                    <div class="card-details">
+                    ` : `
                         <div class="detail-row"><span>預計應繳：</span><strong>NT$ ${member.defaultAmount} / 月</strong></div>
                         <div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">當月未涵蓋方案</span></div>
+                    `}
+                    <div class="member-note-row">
+                        <div><span>備註：</span><span class="note-text">${noteText}</span></div>
+                        <button class="btn-edit-note" onclick="openMemberNoteModal('${member.id}', '${member.name}')">[編輯]</button>
                     </div>
-                `}
+                </div>
             `;
             container.appendChild(card);
         });
 
         document.getElementById('collected').innerText = `${paidCount} 人已繳`;
         document.getElementById('pending').innerText = `${members.length - paidCount} 人未繳`;
-
-        // 載入全域獨立備註
-        loadGlobalNote();
     }
 
     function handlePayClick(id, isPaid, recordId) {
@@ -597,31 +576,39 @@
         activeMemberId = null;
     }
 
-    /* 獨立備註邏輯 */
-    function loadGlobalNote() {
-        const savedNote = localStorage.getItem('yt_global_note') || '尚未設定備註事項。';
-        document.getElementById('global-note-display').innerText = savedNote;
-    }
-
-    function openNoteModal() {
+    /* 成員個人備註相關功能 */
+    function openMemberNoteModal(memberId, memberName) {
         if (!isAdmin) {
             alert('權限不足！只有管理員可以修改備註，請先點擊右上角「管理員登入」。');
             return;
         }
-        const currentNote = localStorage.getItem('yt_global_note') || '';
-        document.getElementById('input-global-note').value = currentNote;
+        activeNoteMemberId = memberId;
+        const allNotes = getMemberNotes();
+        document.getElementById('note-modal-title').innerText = `編輯 ${memberName} 的個人備註`;
+        document.getElementById('input-member-note').value = allNotes[memberId] || '';
         document.getElementById('modal-note-overlay').style.display = 'flex';
     }
 
-    function closeNoteModal() {
+    function closeMemberNoteModal() {
         document.getElementById('modal-note-overlay').style.display = 'none';
+        activeNoteMemberId = null;
     }
 
-    function saveGlobalNote() {
-        const noteText = document.getElementById('input-global-note').value.trim();
-        localStorage.setItem('yt_global_note', noteText || '尚未設定備註事項。');
-        closeNoteModal();
-        loadGlobalNote();
+    function saveMemberNote() {
+        if (!activeNoteMemberId) return;
+
+        const noteText = document.getElementById('input-member-note').value.trim();
+        const allNotes = getMemberNotes();
+
+        if (noteText) {
+            allNotes[activeNoteMemberId] = noteText;
+        } else {
+            delete allNotes[activeNoteMemberId];
+        }
+
+        localStorage.setItem('yt_member_notes', JSON.stringify(allNotes));
+        closeMemberNoteModal();
+        renderList();
     }
 
     function changeMonth(delta) {
