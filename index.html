@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YouTube Premium 成員收款與到期管理</title>
+    <title>YouTube Premium 成員收款與方案追蹤</title>
     <style>
         :root {
             --bg-color: #f8f9fa;
@@ -11,7 +11,7 @@
             --text-main: #212529;
             --primary-red: #ff0000;
             --success-green: #28a745;
-            --warning-orange: #fd7e14;
+            --info-blue: #0d6efd;
             --gray-light: #e9ecef;
             --border-color: #dee2e6;
         }
@@ -190,7 +190,6 @@
             color: var(--success-green);
         }
 
-        /* 彈出視窗 Modal */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -262,16 +261,16 @@
 <div class="container">
     <div class="header">
         <h1>YouTube Premium <span class="badge">家庭方案</span></h1>
-        <div class="sub-info">總月費 NT$ 479（其他 5 人每人 NT$ 80）</div>
+        <div class="sub-info">總月費 NT$ 479（其他 5 人每人每月 NT$ 80）</div>
         
         <div class="dashboard">
             <div class="dash-item">
-                <div class="label">當月已收</div>
-                <div class="value" id="collected" style="color: var(--success-green);">NT$ 0</div>
+                <div class="label">當月收費狀態</div>
+                <div class="value" id="collected" style="color: var(--success-green);">0 人已繳</div>
             </div>
             <div class="dash-item">
-                <div class="label">待收金額</div>
-                <div class="value" id="pending" style="color: var(--primary-red);">NT$ 400</div>
+                <div class="label">待收人數</div>
+                <div class="value" id="pending" style="color: var(--primary-red);">5 人未繳</div>
             </div>
         </div>
     </div>
@@ -291,12 +290,12 @@
     </div>
 </div>
 
-<!-- 繳費資料錄入 Modal -->
+<!-- 繳費資料輸入 Modal -->
 <div class="modal-overlay" id="modal-overlay">
     <div class="modal">
         <h3 id="modal-title">記錄繳費</h3>
         <label>
-            繳費日期
+            實際繳費日期
             <input type="date" id="input-pay-date">
         </label>
         <label>
@@ -304,8 +303,12 @@
             <input type="number" id="input-amount" value="80">
         </label>
         <label>
-            到期日期 (方案期限)
-            <input type="date" id="input-due-date">
+            方案起算日期
+            <input type="date" id="input-start-date">
+        </label>
+        <label>
+            方案結束日期
+            <input type="date" id="input-end-date">
         </label>
         <div class="modal-actions">
             <button class="btn-cancel" onclick="closeModal()">取消</button>
@@ -326,10 +329,6 @@
     let currentDate = new Date();
     let activeMemberId = null;
 
-    function getMonthKey(date) {
-        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    }
-
     function formatDate(date) {
         const y = date.getFullYear();
         const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -337,82 +336,100 @@
         return `${y}-${m}-${d}`;
     }
 
-    function renderList() {
-        const monthKey = getMonthKey(currentDate);
-        document.getElementById('current-month').innerText = `${currentDate.getFullYear()} 年 ${currentDate.getMonth() + 1} 月`;
+    // 取得所有記錄中的全域付款紀錄清單
+    function getAllRecords() {
+        return JSON.parse(localStorage.getItem('yt_global_records')) || [];
+    }
 
-        const paymentData = JSON.parse(localStorage.getItem(`yt_pay_${monthKey}`)) || {};
+    // 檢查某成員在特定年月是否有有效涵蓋的繳費方案
+    function getMemberPaymentStatusForMonth(memberId, year, month) {
+        const records = getAllRecords();
+        // 月初與月末
+        const viewMonthStart = new Date(year, month - 1, 1);
+        const viewMonthEnd = new Date(year, month, 0);
+
+        for (let rec of records) {
+            if (rec.memberId === memberId) {
+                const startDate = new Date(rec.startDate);
+                const endDate = new Date(rec.endDate);
+
+                // 只要當月的時間範圍與方案起止範圍重疊，即算已繳費
+                if (startDate <= viewMonthEnd && endDate >= viewMonthStart) {
+                    return rec;
+                }
+            }
+        }
+        return null;
+    }
+
+    function renderList() {
+        const viewYear = currentDate.getFullYear();
+        const viewMonth = currentDate.getMonth() + 1;
+        document.getElementById('current-month').innerText = `${viewYear} 年 ${viewMonth} 月`;
+
         const container = document.getElementById('member-container');
         container.innerHTML = '';
 
-        let totalCollected = 0;
-        let totalPending = 0;
+        let paidCount = 0;
 
         members.forEach(member => {
-            const data = paymentData[member.id];
-            const isPaid = !!data && data.isPaid;
-            const amount = isPaid ? Number(data.amount) : member.defaultAmount;
+            const activeRecord = getMemberPaymentStatusForMonth(member.id, viewYear, viewMonth);
+            const isPaid = !!activeRecord;
 
-            if (isPaid) {
-                totalCollected += amount;
-            } else {
-                totalPending += member.defaultAmount;
-            }
+            if (isPaid) paidCount++;
 
             const card = document.createElement('div');
             card.className = 'member-card';
             card.innerHTML = `
                 <div class="card-header">
                     <span class="member-name">${member.name}</span>
-                    <button class="pay-btn ${isPaid ? 'paid' : ''}" onclick="handlePayClick('${member.id}')">
+                    <button class="pay-btn ${isPaid ? 'paid' : ''}" onclick="handlePayClick('${member.id}', ${isPaid}, ${activeRecord ? activeRecord.id : null})">
                         ${isPaid ? '✓ 已繳費' : '尚未繳費'}
                     </button>
                 </div>
                 ${isPaid ? `
                     <div class="card-details">
-                        <div class="detail-row"><span>繳費日期：</span><strong>${data.payDate || '無紀錄'}</strong></div>
-                        <div class="detail-row"><span>繳費金額：</span><strong>NT$ ${data.amount}</strong></div>
-                        <div class="detail-row"><span>方案期限至：</span><strong style="color: var(--success-green);">${data.dueDate || '無紀錄'}</strong></div>
+                        <div class="detail-row"><span>實際繳費日期：</span><strong>${activeRecord.payDate}</strong></div>
+                        <div class="detail-row"><span>實繳金額：</span><strong>NT$ ${activeRecord.amount}</strong></div>
+                        <div class="detail-row"><span>方案起算日期：</span><strong>${activeRecord.startDate}</strong></div>
+                        <div class="detail-row"><span>方案結束日期：</span><strong style="color: var(--success-green);">${activeRecord.endDate}</strong></div>
                     </div>
                 ` : `
                     <div class="card-details">
-                        <div class="detail-row"><span>預計應繳：</span><strong>NT$ ${member.defaultAmount}</strong></div>
-                        <div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">待收付款</span></div>
+                        <div class="detail-row"><span>預計應繳：</span><strong>NT$ ${member.defaultAmount} / 月</strong></div>
+                        <div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">當月未涵蓋方案</span></div>
                     </div>
                 `}
             `;
             container.appendChild(card);
         });
 
-        document.getElementById('collected').innerText = `NT$ ${totalCollected}`;
-        document.getElementById('pending').innerText = `NT$ ${totalPending}`;
+        document.getElementById('collected').innerText = `${paidCount} 人已繳`;
+        document.getElementById('pending').innerText = `${members.length - paidCount} 人未繳`;
     }
 
-    function handlePayClick(id) {
-        const monthKey = getMonthKey(currentDate);
-        let paymentData = JSON.parse(localStorage.getItem(`yt_pay_${monthKey}`)) || {};
-
-        if (paymentData[id] && paymentData[id].isPaid) {
-            // 若已繳費，點擊則取消記錄
-            if (confirm('確定要取消此人的繳費紀錄嗎？')) {
-                delete paymentData[id];
-                localStorage.setItem(`yt_pay_${monthKey}`, JSON.stringify(paymentData));
+    function handlePayClick(id, isPaid, recordId) {
+        if (isPaid) {
+            if (confirm('確定要刪除這筆方案繳費紀錄嗎？（這將會一併移除該方案涵蓋的其他月份紀錄）')) {
+                let records = getAllRecords();
+                records = records.filter(r => r.id !== recordId);
+                localStorage.setItem('yt_global_records', JSON.stringify(records));
                 renderList();
             }
         } else {
-            // 未繳費，開啟輸入視窗
             activeMemberId = id;
             const member = members.find(m => m.id === id);
             
-            // 預設今日為繳費日，一個月後為到期日
+            // 預設今日為繳費日，當月1號為起算，一個月後為結束
             const today = new Date();
-            const nextMonth = new Date();
-            nextMonth.setMonth(nextMonth.getMonth() + 1);
+            const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+            const end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
 
             document.getElementById('modal-title').innerText = `記錄 ${member.name} 的繳費`;
             document.getElementById('input-pay-date').value = formatDate(today);
             document.getElementById('input-amount').value = member.defaultAmount;
-            document.getElementById('input-due-date').value = formatDate(nextMonth);
+            document.getElementById('input-start-date').value = formatDate(start);
+            document.getElementById('input-end-date').value = formatDate(end);
             
             document.getElementById('modal-overlay').style.display = 'flex';
         }
@@ -421,21 +438,24 @@
     function savePayment() {
         if (!activeMemberId) return;
 
-        const monthKey = getMonthKey(currentDate);
-        let paymentData = JSON.parse(localStorage.getItem(`yt_pay_${monthKey}`)) || {};
-
+        const records = getAllRecords();
         const payDate = document.getElementById('input-pay-date').value;
         const amount = document.getElementById('input-amount').value;
-        const dueDate = document.getElementById('input-due-date').value;
+        const startDate = document.getElementById('input-start-date').value;
+        const endDate = document.getElementById('input-end-date').value;
 
-        paymentData[activeMemberId] = {
-            isPaid: true,
+        const newRecord = {
+            id: Date.now(), // 唯一 ID
+            memberId: activeMemberId,
             payDate: payDate,
             amount: amount,
-            dueDate: dueDate
+            startDate: startDate,
+            endDate: endDate
         };
 
-        localStorage.setItem(`yt_pay_${monthKey}`, JSON.stringify(paymentData));
+        records.push(newRecord);
+        localStorage.setItem('yt_global_records', JSON.stringify(records));
+
         closeModal();
         renderList();
     }
