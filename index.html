@@ -211,6 +211,53 @@
             color: var(--success-green);
         }
 
+        /* 獨立備註區樣式 */
+        .global-note-card {
+            background: var(--card-bg);
+            padding: 16px;
+            border-radius: 12px;
+            margin-top: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+            border-left: 4px solid var(--info-blue);
+        }
+
+        .note-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .note-title {
+            font-size: 0.95rem;
+            font-weight: bold;
+            color: var(--text-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .edit-note-btn {
+            background: none;
+            border: none;
+            color: var(--info-blue);
+            font-size: 0.8rem;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .note-content {
+            font-size: 0.88rem;
+            color: #495057;
+            white-space: pre-wrap;
+            line-height: 1.5;
+            background: var(--bg-color);
+            padding: 10px;
+            border-radius: 8px;
+            min-height: 40px;
+        }
+
+        /* Modal 彈窗樣式 */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -314,10 +361,19 @@
     <div class="member-list" id="member-container">
         <!-- 成員清單由 JS 動態生成 -->
     </div>
+
+    <!-- 獨立備註欄（全域公告欄） -->
+    <div class="global-note-card">
+        <div class="note-header">
+            <span class="note-title">📌 備註與注意事項</span>
+            <button class="edit-note-btn" onclick="openNoteModal()">✏️ 編輯備註</button>
+        </div>
+        <div class="note-content" id="global-note-display">尚未設定備註事項。</div>
+    </div>
 </div>
 
-<!-- 繳費資料輸入 Modal (含備註欄) -->
-<div class="modal-overlay" id="modal-overlay">
+<!-- 繳費資料輸入 Modal -->
+<div class="modal-overlay" id="modal-pay-overlay">
     <div class="modal">
         <h3 id="modal-title">記錄繳費</h3>
         <label>
@@ -336,19 +392,30 @@
             方案結束日期
             <input type="date" id="input-end-date">
         </label>
-        <label>
-            備註（可填寫轉帳後五碼、付款方式等）
-            <textarea id="input-note" rows="2" placeholder="例：Line Pay 轉帳、一次繳一年..."></textarea>
-        </label>
         <div class="modal-actions">
-            <button class="btn-cancel" onclick="closeModal()">取消</button>
+            <button class="btn-cancel" onclick="closePayModal()">取消</button>
             <button class="btn-confirm" onclick="savePayment()">確認儲存</button>
         </div>
     </div>
 </div>
 
+<!-- 編輯獨立備註 Modal -->
+<div class="modal-overlay" id="modal-note-overlay">
+    <div class="modal">
+        <h3>編輯獨立備註</h3>
+        <label>
+            內容（例如：轉帳帳號、繳費提醒等）
+            <textarea id="input-global-note" rows="5" placeholder="請輸入備註內容..."></textarea>
+        </label>
+        <div class="modal-actions">
+            <button class="btn-cancel" onclick="closeNoteModal()">取消</button>
+            <button class="btn-confirm" onclick="saveGlobalNote()">儲存備註</button>
+        </div>
+    </div>
+</div>
+
 <script>
-    // 預設密碼設定（預設為 1234）
+    // 預設密碼設定
     const ADMIN_PASSWORD = "1234";
     let isAdmin = false;
 
@@ -451,7 +518,6 @@
                         <div class="detail-row"><span>實繳金額：</span><strong>NT$ ${activeRecord.amount}</strong></div>
                         <div class="detail-row"><span>方案起算日期：</span><strong>${activeRecord.startDate}</strong></div>
                         <div class="detail-row"><span>方案結束日期：</span><strong style="color: var(--success-green);">${activeRecord.endDate}</strong></div>
-                        ${activeRecord.note ? `<div class="detail-row" style="margin-top: 4px; border-top: 1px dashed var(--border-color); padding-top: 4px;"><span>備註：</span><strong style="color: #6c757d;">${activeRecord.note}</strong></div>` : ''}
                     </div>
                 ` : `
                     <div class="card-details">
@@ -465,6 +531,9 @@
 
         document.getElementById('collected').innerText = `${paidCount} 人已繳`;
         document.getElementById('pending').innerText = `${members.length - paidCount} 人未繳`;
+
+        // 載入全域獨立備註
+        loadGlobalNote();
     }
 
     function handlePayClick(id, isPaid, recordId) {
@@ -493,9 +562,8 @@
             document.getElementById('input-amount').value = member.defaultAmount;
             document.getElementById('input-start-date').value = formatDate(start);
             document.getElementById('input-end-date').value = formatDate(end);
-            document.getElementById('input-note').value = '';
             
-            document.getElementById('modal-overlay').style.display = 'flex';
+            document.getElementById('modal-pay-overlay').style.display = 'flex';
         }
     }
 
@@ -507,7 +575,6 @@
         const amount = document.getElementById('input-amount').value;
         const startDate = document.getElementById('input-start-date').value;
         const endDate = document.getElementById('input-end-date').value;
-        const note = document.getElementById('input-note').value.trim();
 
         const newRecord = {
             id: Date.now(),
@@ -515,20 +582,46 @@
             payDate: payDate,
             amount: amount,
             startDate: startDate,
-            endDate: endDate,
-            note: note
+            endDate: endDate
         };
 
         records.push(newRecord);
         localStorage.setItem('yt_global_records', JSON.stringify(records));
 
-        closeModal();
+        closePayModal();
         renderList();
     }
 
-    function closeModal() {
-        document.getElementById('modal-overlay').style.display = 'none';
+    function closePayModal() {
+        document.getElementById('modal-pay-overlay').style.display = 'none';
         activeMemberId = null;
+    }
+
+    /* 獨立備註邏輯 */
+    function loadGlobalNote() {
+        const savedNote = localStorage.getItem('yt_global_note') || '尚未設定備註事項。';
+        document.getElementById('global-note-display').innerText = savedNote;
+    }
+
+    function openNoteModal() {
+        if (!isAdmin) {
+            alert('權限不足！只有管理員可以修改備註，請先點擊右上角「管理員登入」。');
+            return;
+        }
+        const currentNote = localStorage.getItem('yt_global_note') || '';
+        document.getElementById('input-global-note').value = currentNote;
+        document.getElementById('modal-note-overlay').style.display = 'flex';
+    }
+
+    function closeNoteModal() {
+        document.getElementById('modal-note-overlay').style.display = 'none';
+    }
+
+    function saveGlobalNote() {
+        const noteText = document.getElementById('input-global-note').value.trim();
+        localStorage.setItem('yt_global_note', noteText || '尚未設定備註事項。');
+        closeNoteModal();
+        loadGlobalNote();
     }
 
     function changeMonth(delta) {
