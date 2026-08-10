@@ -388,7 +388,6 @@
 </div>
 
 <script>
-    // 預設密碼設定 (可自訂)
     const ADMIN_PASSWORD = "1234";
     let isAdmin = false;
 
@@ -419,17 +418,18 @@
         return JSON.parse(localStorage.getItem('yt_member_notes')) || {};
     }
 
+    // 核心邏輯：判斷該成員在「所選年份與月份」是否有屬該月份的方案紀錄
+    // 規則：方案的開始日期 (startDate) 的年與月符合當前檢視的年月，即視為該月份已繳費
     function getMemberPaymentStatusForMonth(memberId, year, month) {
         const records = getAllRecords();
-        const viewMonthStart = new Date(year, month - 1, 1);
-        const viewMonthEnd = new Date(year, month, 0);
 
         for (let rec of records) {
             if (rec.memberId === memberId) {
                 const startDate = new Date(rec.startDate);
-                const endDate = new Date(rec.endDate);
+                const recYear = startDate.getFullYear();
+                const recMonth = startDate.getMonth() + 1;
 
-                if (startDate <= viewMonthEnd && endDate >= viewMonthStart) {
+                if (recYear === year && recMonth === month) {
                     return rec;
                 }
             }
@@ -500,7 +500,7 @@
                         <div class="detail-row"><span>方案結束日期：</span><strong style="color: var(--success-green);">${activeRecord.endDate}</strong></div>
                     ` : `
                         <div class="detail-row"><span>預計應繳：</span><strong>NT$ ${member.defaultAmount} / 月</strong></div>
-                        <div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">當月未涵蓋方案</span></div>
+                        <div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">當月尚未繳費</span></div>
                     `}
                     <div class="member-note-row">
                         <div><span>備註：</span><span class="note-text">${noteText}</span></div>
@@ -522,7 +522,7 @@
         }
 
         if (isPaid) {
-            if (confirm('確定要刪除這筆方案繳費紀錄嗎？（這將會一併移除該方案涵蓋的其他月份紀錄）')) {
+            if (confirm('確定要刪除這筆繳費紀錄嗎？')) {
                 let records = getAllRecords();
                 records = records.filter(r => r.id !== recordId);
                 localStorage.setItem('yt_global_records', JSON.stringify(records));
@@ -533,8 +533,13 @@
             const member = members.find(m => m.id === id);
             
             const today = new Date();
-            const start = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
-            const end = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+            const viewYear = currentDate.getFullYear();
+            const viewMonth = currentDate.getMonth(); // 0-based
+
+            // 預設方案起算日：當月 7 號
+            const start = new Date(viewYear, viewMonth, 7);
+            // 預設方案結束日：下個月 6 號
+            const end = new Date(viewYear, viewMonth + 1, 6);
 
             document.getElementById('modal-title').innerText = `記錄 ${member.name} 的繳費`;
             document.getElementById('input-pay-date').value = formatDate(today);
