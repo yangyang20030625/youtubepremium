@@ -284,9 +284,14 @@
 
         .modal-actions {
             display: flex;
-            justify-content: flex-end;
-            gap: 8px;
+            justify-content: space-between;
+            align-items: center;
             margin-top: 10px;
+        }
+
+        .modal-actions-right {
+            display: flex;
+            gap: 8px;
         }
 
         .btn-confirm {
@@ -304,6 +309,16 @@
             padding: 8px 16px;
             border-radius: 6px;
             cursor: pointer;
+        }
+
+        .btn-delete {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
         }
     </style>
 </head>
@@ -345,7 +360,7 @@
     </div>
 </div>
 
-<!-- 繳費資料輸入 Modal -->
+<!-- 繳費資料輸入/編輯 Modal -->
 <div class="modal-overlay" id="modal-pay-overlay">
     <div class="modal">
         <h3 id="modal-title">記錄繳費</h3>
@@ -366,8 +381,11 @@
             <input type="date" id="input-end-date">
         </label>
         <div class="modal-actions">
-            <button class="btn-cancel" onclick="closePayModal()">取消</button>
-            <button class="btn-confirm" onclick="savePayment()">確認儲存</button>
+            <button id="btn-delete-rec" class="btn-delete" style="display: none;" onclick="deleteCurrentRecord()">刪除紀錄</button>
+            <div class="modal-actions-right">
+                <button class="btn-cancel" onclick="closePayModal()">取消</button>
+                <button class="btn-confirm" onclick="savePayment()">儲存變更</button>
+            </div>
         </div>
     </div>
 </div>
@@ -380,7 +398,7 @@
             備註內容
             <textarea id="input-member-note" rows="4" placeholder="例：常使用 LinePay、轉帳後五碼 12345..."></textarea>
         </label>
-        <div class="modal-actions">
+        <div class="modal-actions" style="justify-content: flex-end;">
             <button class="btn-cancel" onclick="closeMemberNoteModal()">取消</button>
             <button class="btn-confirm" onclick="saveMemberNote()">儲存備註</button>
         </div>
@@ -401,6 +419,7 @@
 
     let currentDate = new Date();
     let activeMemberId = null;
+    let editingRecordId = null;
     let activeNoteMemberId = null;
 
     function formatDate(date) {
@@ -418,23 +437,38 @@
         return JSON.parse(localStorage.getItem('yt_member_notes')) || {};
     }
 
-    // 核心邏輯：判斷該成員在「所選年份與月份」是否有屬該月份的方案紀錄
-    // 規則：方案的開始日期 (startDate) 的年與月符合當前檢視的年月，即視為該月份已繳費
+    // 判定成員在特定「檢視年月」下的繳費狀態
+    // 規則：起算日 (startDate) 在當月 7 號（含）之後，且在下月 6 號（含）之前的紀錄，歸屬於當月方案！
     function getMemberPaymentStatusForMonth(memberId, year, month) {
         const records = getAllRecords();
 
         for (let rec of records) {
             if (rec.memberId === memberId) {
-                const startDate = new Date(rec.startDate);
-                const recYear = startDate.getFullYear();
-                const recMonth = startDate.getMonth() + 1;
+                const start = new Date(rec.startDate);
+                
+                // 1/7 到 2/6 屬於 1 月份；2/7 到 3/6 屬於 2 月份
+                // 如果起算日落在當月的「7號 ~ 下月6號」，即屬於當月
+                const currentMonthStartBoundary = new Date(year, month - 1, 7);
+                const nextMonthEndBoundary = new Date(year, month, 6);
 
-                if (recYear === year && recMonth === month) {
+                if (start >= currentMonthStartBoundary && start <= nextMonthEndBoundary) {
                     return rec;
                 }
             }
         }
         return null;
+    }
+
+    // 取得該成員最新一次（歷史最後一次）繳費紀錄的結束日期
+    function getLastEndDateForMember(memberId) {
+        const records = getAllRecords();
+        const memberRecs = records.filter(r => r.memberId === memberId);
+
+        if (memberRecs.length === 0) return null;
+
+        // 依結束日期由新到舊排序
+        memberRecs.sort((a, b) => new Date(b.endDate) - new Date(a.endDate));
+        return memberRecs[0].endDate;
     }
 
     function toggleAdmin() {
@@ -480,6 +514,7 @@
             const activeRecord = getMemberPaymentStatusForMonth(member.id, viewYear, viewMonth);
             const isPaid = !!activeRecord;
             const noteText = allNotes[member.id] || '無';
+            const lastEndDate = getLastEndDateForMember(member.id);
 
             if (isPaid) paidCount++;
 
@@ -489,7 +524,7 @@
                 <div class="card-header">
                     <span class="member-name">${member.name}</span>
                     <button class="pay-btn ${isPaid ? 'paid' : ''}" onclick="handlePayClick('${member.id}', ${isPaid}, ${activeRecord ? activeRecord.id : null})">
-                        ${isPaid ? '✓ 已繳費' : '尚未繳費'}
+                        ${isPaid ? '✓ 已繳費 (點擊編輯)' : '尚未繳費'}
                     </button>
                 </div>
                 <div class="card-details">
@@ -501,10 +536,11 @@
                     ` : `
                         <div class="detail-row"><span>預計應繳：</span><strong>NT$ ${member.defaultAmount} / 月</strong></div>
                         <div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">當月尚未繳費</span></div>
+                        <div class="detail-row"><span>上一次方案截止日：</span><strong style="color: #6c757d;">${lastEndDate ? lastEndDate : '尚無歷史紀錄'}</strong></div>
                     `}
                     <div class="member-note-row">
                         <div><span>備註：</span><span class="note-text">${noteText}</span></div>
-                        <button class="btn-edit-note" onclick="openMemberNoteModal('${member.id}', '${member.name}')">[編輯]</button>
+                        <button class="btn-edit-note" onclick="openMemberNoteModal('${member.id}', '${member.name}')">[編輯]`</button>
                     </div>
                 </div>
             `;
@@ -521,17 +557,24 @@
             return;
         }
 
+        activeMemberId = id;
+        const member = members.find(m => m.id === id);
+
         if (isPaid) {
-            if (confirm('確定要刪除這筆繳費紀錄嗎？')) {
-                let records = getAllRecords();
-                records = records.filter(r => r.id !== recordId);
-                localStorage.setItem('yt_global_records', JSON.stringify(records));
-                renderList();
-            }
+            // 編輯已存在的紀錄
+            editingRecordId = recordId;
+            const records = getAllRecords();
+            const rec = records.find(r => r.id === recordId);
+
+            document.getElementById('modal-title').innerText = `編輯 ${member.name} 的繳費紀錄`;
+            document.getElementById('input-pay-date').value = rec.payDate;
+            document.getElementById('input-amount').value = rec.amount;
+            document.getElementById('input-start-date').value = rec.startDate;
+            document.getElementById('input-end-date').value = rec.endDate;
+            document.getElementById('btn-delete-rec').style.display = 'block';
         } else {
-            activeMemberId = id;
-            const member = members.find(m => m.id === id);
-            
+            // 新增當月紀錄
+            editingRecordId = null;
             const today = new Date();
             const viewYear = currentDate.getFullYear();
             const viewMonth = currentDate.getMonth(); // 0-based
@@ -546,39 +589,62 @@
             document.getElementById('input-amount').value = member.defaultAmount;
             document.getElementById('input-start-date').value = formatDate(start);
             document.getElementById('input-end-date').value = formatDate(end);
-            
-            document.getElementById('modal-pay-overlay').style.display = 'flex';
+            document.getElementById('btn-delete-rec').style.display = 'none';
         }
+
+        document.getElementById('modal-pay-overlay').style.display = 'flex';
     }
 
     function savePayment() {
         if (!activeMemberId) return;
 
-        const records = getAllRecords();
+        let records = getAllRecords();
         const payDate = document.getElementById('input-pay-date').value;
         const amount = document.getElementById('input-amount').value;
         const startDate = document.getElementById('input-start-date').value;
         const endDate = document.getElementById('input-end-date').value;
 
-        const newRecord = {
-            id: Date.now(),
-            memberId: activeMemberId,
-            payDate: payDate,
-            amount: amount,
-            startDate: startDate,
-            endDate: endDate
-        };
+        if (editingRecordId) {
+            // 更新舊紀錄
+            records = records.map(r => {
+                if (r.id === editingRecordId) {
+                    return { ...r, payDate, amount, startDate, endDate };
+                }
+                return r;
+            });
+        } else {
+            // 新增紀錄
+            const newRecord = {
+                id: Date.now(),
+                memberId: activeMemberId,
+                payDate,
+                amount,
+                startDate,
+                endDate
+            };
+            records.push(newRecord);
+        }
 
-        records.push(newRecord);
         localStorage.setItem('yt_global_records', JSON.stringify(records));
-
         closePayModal();
         renderList();
+    }
+
+    function deleteCurrentRecord() {
+        if (!editingRecordId) return;
+        if (confirm('確定要刪除這筆繳費紀錄嗎？')) {
+            let records = getAllRecords();
+            records = records.filter(r => r.id !== editingRecordId);
+            localStorage.setItem('yt_global_records', JSON.stringify(records));
+            closePayModal();
+            renderList();
+        }
     }
 
     function closePayModal() {
         document.getElementById('modal-pay-overlay').style.display = 'none';
         activeMemberId = null;
+        editingRecordId = null;
     }
 
     /* 成員個人備註相關功能 */
