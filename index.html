@@ -326,7 +326,7 @@
 
 <div class="container">
     <div class="top-bar">
-        <button id="auth-btn" class="auth-btn">🔑 管理員登入</button>
+        <button id="auth-btn" class="auth-btn" onclick="toggleAdmin()">🔑 管理員登入</button>
     </div>
 
     <div class="header">
@@ -347,12 +347,12 @@
 
     <!-- 切換月份區域 -->
     <div class="month-selector">
-        <button class="month-nav-btn" id="btn-prev-month">◄</button>
+        <button class="month-nav-btn" onclick="changeMonth(-1)">◄</button>
         <div>
-            <span class="month-title" id="current-month">2026 年 8 月</span>
-            <button class="today-btn" id="btn-today">回到當月</button>
+            <span class="month-title" id="current-month">-- 年 -- 月</span>
+            <button class="today-btn" onclick="resetToCurrentMonth()">回到當月</button>
         </div>
-        <button class="month-nav-btn" id="btn-next-month">►</button>
+        <button class="month-nav-btn" onclick="changeMonth(1)">►</button>
     </div>
 
     <div class="member-list" id="member-container">
@@ -381,10 +381,10 @@
             <input type="date" id="input-end-date">
         </label>
         <div class="modal-actions">
-            <button id="btn-delete-rec" class="btn-delete" style="display: none;">刪除紀錄</button>
+            <button id="btn-delete-rec" class="btn-delete" style="display: none;" onclick="deleteCurrentRecord()">刪除紀錄</button>
             <div class="modal-actions-right">
-                <button class="btn-cancel" id="btn-cancel-pay">取消</button>
-                <button class="btn-confirm" id="btn-save-pay">儲存變更</button>
+                <button class="btn-cancel" onclick="closePayModal()">取消</button>
+                <button class="btn-confirm" onclick="savePayment()">儲存變更</button>
             </div>
         </div>
     </div>
@@ -399,8 +399,8 @@
             <textarea id="input-member-note" rows="4" placeholder="例：常使用 LinePay、轉帳後五碼 12345..."></textarea>
         </label>
         <div class="modal-actions" style="justify-content: flex-end;">
-            <button class="btn-cancel" id="btn-cancel-note">取消</button>
-            <button class="btn-confirm" id="btn-save-note">儲存備註</button>
+            <button class="btn-cancel" onclick="closeMemberNoteModal()">取消</button>
+            <button class="btn-confirm" onclick="saveMemberNote()">儲存備註</button>
         </div>
     </div>
 </div>
@@ -417,57 +417,58 @@
         { id: 'm5', name: '黃柏諺', defaultAmount: 80 }
     ];
 
+    var memoryStorage = { records: [], notes: {} };
     var currentDate = new Date();
     var activeMemberId = null;
     var editingRecordId = null;
     var activeNoteMemberId = null;
 
-    function pad(num) {
-        return num < 10 ? '0' + num : '' + num;
-    }
-
-    function formatDateStr(y, m, d) {
-        return y + '-' + pad(m) + '-' + pad(d);
-    }
-
-    function formatDate(d) {
-        return formatDateStr(d.getFullYear(), d.getMonth() + 1, d.getDate());
-    }
+    function pad(n) { return n < 10 ? '0' + n : '' + n; }
+    function formatDateStr(y, m, d) { return y + '-' + pad(m) + '-' + pad(d); }
+    function formatDate(d) { return formatDateStr(d.getFullYear(), d.getMonth() + 1, d.getDate()); }
 
     function getAllRecords() {
         try {
             var data = localStorage.getItem('yt_global_records');
-            return data ? JSON.parse(data) : [];
+            return data ? JSON.parse(data) : memoryStorage.records;
         } catch (e) {
-            return [];
+            return memoryStorage.records;
         }
+    }
+
+    function saveAllRecords(records) {
+        memoryStorage.records = records;
+        try {
+            localStorage.setItem('yt_global_records', JSON.stringify(records));
+        } catch (e) {}
     }
 
     function getMemberNotes() {
         try {
             var data = localStorage.getItem('yt_member_notes');
-            return data ? JSON.parse(data) : {};
+            return data ? JSON.parse(data) : memoryStorage.notes;
         } catch (e) {
-            return {};
+            return memoryStorage.notes;
         }
     }
 
+    function saveMemberNotes(notes) {
+        memoryStorage.notes = notes;
+        try {
+            localStorage.setItem('yt_member_notes', JSON.stringify(notes));
+        } catch (e) {}
+    }
+
+    // 關鍵修復：判斷當前查看的月份，是否落在成員任何一筆紀錄的 [startDate ~ endDate] 範圍內！
     function getMemberPaymentStatusForMonth(memberId, year, month) {
         var records = getAllRecords();
-        var currentStart = formatDateStr(year, month, 7);
-        
-        var nextYear = year;
-        var nextMonth = month + 1;
-        if (nextMonth > 12) {
-            nextMonth = 1;
-            nextYear = year + 1;
-        }
-        var nextEnd = formatDateStr(nextYear, nextMonth, 6);
+        var currentCycleStart = formatDateStr(year, month, 7); // 當月週期開始 7號
 
         for (var i = 0; i < records.length; i++) {
             var rec = records[i];
-            if (rec.memberId === memberId && rec.startDate) {
-                if (rec.startDate >= currentStart && rec.startDate <= nextEnd) {
+            if (rec.memberId === memberId && rec.startDate && rec.endDate) {
+                // 只要當月的 7 號 <= 方案的結束日期，且 >= 方案開始日期，就代表這筆紀錄涵蓋了當月！
+                if (currentCycleStart >= rec.startDate && currentCycleStart <= rec.endDate) {
                     return rec;
                 }
             }
@@ -519,87 +520,64 @@
     }
 
     function renderList() {
-        try {
-            var viewYear = currentDate.getFullYear();
-            var viewMonth = currentDate.getMonth() + 1;
-            document.getElementById('current-month').innerText = viewYear + ' 年 ' + viewMonth + ' 月';
+        var viewYear = currentDate.getFullYear();
+        var viewMonth = currentDate.getMonth() + 1;
+        document.getElementById('current-month').innerText = viewYear + ' 年 ' + viewMonth + ' 月';
 
-            var container = document.getElementById('member-container');
-            container.innerHTML = '';
+        var container = document.getElementById('member-container');
+        container.innerHTML = '';
 
-            var paidCount = 0;
-            var allNotes = getMemberNotes();
+        var paidCount = 0;
+        var allNotes = getMemberNotes();
 
-            for (var i = 0; i < members.length; i++) {
-                var member = members[i];
-                var activeRecord = getMemberPaymentStatusForMonth(member.id, viewYear, viewMonth);
-                var isPaid = !!activeRecord;
-                var noteText = allNotes[member.id] || '無';
-                var lastEndDate = getLastEndDateForMember(member.id);
+        for (var i = 0; i < members.length; i++) {
+            var member = members[i];
+            var activeRecord = getMemberPaymentStatusForMonth(member.id, viewYear, viewMonth);
+            var isPaid = !!activeRecord;
+            var noteText = allNotes[member.id] || '無';
+            var lastEndDate = getLastEndDateForMember(member.id);
 
-                if (isPaid) paidCount++;
+            if (isPaid) paidCount++;
 
-                var card = document.createElement('div');
-                card.className = 'member-card';
-                
-                var detailsHtml = '';
-                if (isPaid) {
-                    detailsHtml = 
-                        '<div class="detail-row"><span>實際繳費日期：</span><strong>' + activeRecord.payDate + '</strong></div>' +
-                        '<div class="detail-row"><span>實繳金額：</span><strong>NT$ ' + activeRecord.amount + '</strong></div>' +
-                        '<div class="detail-row"><span>方案起算日期：</span><strong>' + activeRecord.startDate + '</strong></div>' +
-                        '<div class="detail-row"><span>方案結束日期：</span><strong style="color: var(--success-green);">' + activeRecord.endDate + '</strong></div>';
-                } else {
-                    detailsHtml = 
-                        '<div class="detail-row"><span>預計應繳：</span><strong>NT$ ' + member.defaultAmount + ' / 月</strong></div>' +
-                        '<div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">當月尚未繳費</span></div>' +
-                        '<div class="detail-row"><span>上一次方案截止日：</span><strong style="color: #6c757d;">' + (lastEndDate ? lastEndDate : '尚無歷史紀錄') + '</strong></div>';
-                }
+            var card = document.createElement('div');
+            card.className = 'member-card';
+            
+            var detailsHtml = '';
+            if (isPaid) {
+                detailsHtml = 
+                    '<div class="detail-row"><span>實際繳費日期：</span><strong>' + activeRecord.payDate + '</strong></div>' +
+                    '<div class="detail-row"><span>實繳金額：</span><strong>NT$ ' + activeRecord.amount + '</strong></div>' +
+                    '<div class="detail-row"><span>方案起算日期：</span><strong>' + activeRecord.startDate + '</strong></div>' +
+                    '<div class="detail-row"><span>方案結束日期：</span><strong style="color: var(--success-green);">' + activeRecord.endDate + '</strong></div>';
+            } else {
+                detailsHtml = 
+                    '<div class="detail-row"><span>預計應繳：</span><strong>NT$ ' + member.defaultAmount + ' / 月</strong></div>' +
+                    '<div class="detail-row"><span>狀態：</span><span style="color: var(--primary-red);">當月尚未繳費</span></div>' +
+                    '<div class="detail-row"><span>上一次方案截止日：</span><strong style="color: #6c757d;">' + (lastEndDate ? lastEndDate : '尚無歷史紀錄') + '</strong></div>';
+            }
 
-                var btnText = isPaid ? '✓ 已繳費 (點擊編輯)' : '尚未繳費';
-                var btnClass = isPaid ? 'pay-btn paid' : 'pay-btn';
+            var btnText = isPaid ? '✓ 已繳費 (點擊編輯)' : '尚未繳費';
+            var btnClass = isPaid ? 'pay-btn paid' : 'pay-btn';
+            var recIdVal = activeRecord ? activeRecord.id : '';
 
-                card.innerHTML = 
-                    '<div class="card-header">' +
-                        '<span class="member-name">' + member.name + '</span>' +
-                        '<button class="' + btnClass + '" data-id="' + member.id + '" data-paid="' + isPaid + '" data-recid="' + (activeRecord ? activeRecord.id : '') + '">' + btnText + '</button>' +
+            card.innerHTML = 
+                '<div class="card-header">' +
+                    '<span class="member-name">' + member.name + '</span>' +
+                    '<button class="' + btnClass + '" onclick="handlePayClick(\'' + member.id + '\', ' + isPaid + ', \'' + recIdVal + '\')">' + btnText + '</button>' +
+                '</div>' +
+                '<div class="card-details">' +
+                    detailsHtml +
+                    '<div class="member-note-row">' +
+                        '<div><span>備註：</span><span class="note-text">' + noteText + '</span></div>' +
+                        '<button class="btn-edit-note" onclick="openMemberNoteModal(\'' + member.id + '\', \'' + member.name + '\')">[編輯]</button>' +
                     '</div>' +
-                    '<div class="card-details">' +
-                        detailsHtml +
-                        '<div class="member-note-row">' +
-                            '<div><span>備註：</span><span class="note-text">' + noteText + '</span></div>' +
-                            '<button class="btn-edit-note" data-note-id="' + member.id + '" data-note-name="' + member.name + '">[編輯]</button>' +
-                        '</div>' +
-                    '</div>';
+                '</div>';
 
-                container.appendChild(card);
-            }
-
-            document.getElementById('collected').innerText = paidCount + ' 人已繳';
-            document.getElementById('pending').innerText = (members.length - paidCount) + ' 人未繳';
-
-            // 動態綁定點擊事件，避免 inline event handler 觸發語法錯誤
-            var payBtns = container.querySelectorAll('.pay-btn');
-            for (var j = 0; j < payBtns.length; j++) {
-                payBtns[j].onclick = function() {
-                    var mId = this.getAttribute('data-id');
-                    var pStatus = this.getAttribute('data-paid') === 'true';
-                    var rId = this.getAttribute('data-recid');
-                    handlePayClick(mId, pStatus, rId);
-                };
-            }
-
-            var noteBtns = container.querySelectorAll('.btn-edit-note');
-            for (var k = 0; k < noteBtns.length; k++) {
-                noteBtns[k].onclick = function() {
-                    var nId = this.getAttribute('data-note-id');
-                    var nName = this.getAttribute('data-note-name');
-                    openMemberNoteModal(nId, nName);
-                };
-            }
-        } catch (e) {
-            console.error("Render Error: ", e);
+            container.appendChild(card);
         }
+
+        document.getElementById('collected').innerText = paidCount + ' 人已繳';
+        document.getElementById('pending').innerText = (members.length - paidCount) + ' 人未繳';
     }
 
     function handlePayClick(id, isPaid, recordId) {
@@ -687,7 +665,7 @@
             });
         }
 
-        localStorage.setItem('yt_global_records', JSON.stringify(records));
+        saveAllRecords(records);
         closePayModal();
         renderList();
     }
@@ -702,7 +680,7 @@
                     newRecords.push(records[i]);
                 }
             }
-            localStorage.setItem('yt_global_records', JSON.stringify(newRecords));
+            saveAllRecords(newRecords);
             closePayModal();
             renderList();
         }
@@ -743,36 +721,22 @@
             delete allNotes[activeNoteMemberId];
         }
 
-        localStorage.setItem('yt_member_notes', JSON.stringify(allNotes));
+        saveMemberNotes(allNotes);
         closeMemberNoteModal();
         renderList();
     }
 
-    // 事件綁定初始化
-    window.onload = function() {
-        document.getElementById('auth-btn').onclick = toggleAdmin;
-        document.getElementById('btn-prev-month').onclick = function() {
-            currentDate.setMonth(currentDate.getMonth() - 1);
-            renderList();
-        };
-        document.getElementById('btn-next-month').onclick = function() {
-            currentDate.setMonth(currentDate.getMonth() + 1);
-            renderList();
-        };
-        document.getElementById('btn-today').onclick = function() {
-            currentDate = new Date();
-            renderList();
-        };
-
-        document.getElementById('btn-cancel-pay').onclick = closePayModal;
-        document.getElementById('btn-save-pay').onclick = savePayment;
-        document.getElementById('btn-delete-rec').onclick = deleteCurrentRecord;
-
-        document.getElementById('btn-cancel-note').onclick = closeMemberNoteModal;
-        document.getElementById('btn-save-note').onclick = saveMemberNote;
-
+    function changeMonth(delta) {
+        currentDate.setMonth(currentDate.getMonth() + delta);
         renderList();
-    };
+    }
+
+    function resetToCurrentMonth() {
+        currentDate = new Date();
+        renderList();
+    }
+
+    renderList();
 </script>
 
 </body>
