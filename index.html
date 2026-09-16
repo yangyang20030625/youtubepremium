@@ -33,8 +33,14 @@
 
         .top-bar {
             display: flex;
-            justify-content: flex-end;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 10px;
+        }
+
+        .sync-status {
+            font-size: 0.8rem;
+            color: #6c757d;
         }
 
         .auth-btn {
@@ -239,7 +245,6 @@
             color: var(--success-green);
         }
 
-        /* Modal 彈窗樣式 */
         .modal-overlay {
             display: none;
             position: fixed;
@@ -326,6 +331,7 @@
 
 <div class="container">
     <div class="top-bar">
+        <span class="sync-status" id="sync-status">☁️ 雲端同步中...</span>
         <button id="auth-btn" class="auth-btn" onclick="toggleAdmin()">🔑 管理員登入</button>
     </div>
 
@@ -345,7 +351,6 @@
         </div>
     </div>
 
-    <!-- 切換月份區域 -->
     <div class="month-selector">
         <button class="month-nav-btn" onclick="changeMonth(-1)">◄</button>
         <div>
@@ -356,11 +361,9 @@
     </div>
 
     <div class="member-list" id="member-container">
-        <!-- 成員清單由 JS 動態生成 -->
     </div>
 </div>
 
-<!-- 繳費資料輸入/編輯 Modal -->
 <div class="modal-overlay" id="modal-pay-overlay">
     <div class="modal">
         <h3 id="modal-title">記錄繳費</h3>
@@ -390,7 +393,6 @@
     </div>
 </div>
 
-<!-- 編輯成員個人備註 Modal -->
 <div class="modal-overlay" id="modal-note-overlay">
     <div class="modal">
         <h3 id="note-modal-title">編輯個人備註</h3>
@@ -406,6 +408,8 @@
 </div>
 
 <script>
+    var API_URL = "https://script.google.com/macros/s/AKfycbxBQRdeiXKz5coDHt_W2aCnhKTRvakCU7LzgpUAXkShJ4HPIIFO5ebU6mf0Rh2K6FFRJg/exec";
+
     var ADMIN_PASSWORD = "1234";
     var isAdmin = false;
 
@@ -417,7 +421,7 @@
         { id: 'm5', name: '黃柏諺', defaultAmount: 80 }
     ];
 
-    var memoryStorage = { records: [], notes: {} };
+    var cloudData = { records: [], notes: {} };
     var currentDate = new Date();
     var activeMemberId = null;
     var editingRecordId = null;
@@ -427,47 +431,35 @@
     function formatDateStr(y, m, d) { return y + '-' + pad(m) + '-' + pad(d); }
     function formatDate(d) { return formatDateStr(d.getFullYear(), d.getMonth() + 1, d.getDate()); }
 
-    function getAllRecords() {
-        try {
-            var data = localStorage.getItem('yt_global_records');
-            return data ? JSON.parse(data) : memoryStorage.records;
-        } catch (e) {
-            return memoryStorage.records;
+    function fetchCloudData() {
+        document.getElementById('sync-status').innerText = "☁️ 讀取雲端資料...";
+        if (!API_URL) {
+            document.getElementById('sync-status').innerText = "⚠️ 未設定雲端資料庫 URL";
+            renderList();
+            return;
         }
+
+        fetch(API_URL)
+            .then(res => res.json())
+            .then(data => {
+                cloudData = data;
+                document.getElementById('sync-status').innerText = "✅ 雲端連線正常";
+                renderList();
+            })
+            .catch(err => {
+                console.error(err);
+                document.getElementById('sync-status').innerText = "❌ 雲端同步失敗";
+                renderList();
+            });
     }
 
-    function saveAllRecords(records) {
-        memoryStorage.records = records;
-        try {
-            localStorage.setItem('yt_global_records', JSON.stringify(records));
-        } catch (e) {}
-    }
-
-    function getMemberNotes() {
-        try {
-            var data = localStorage.getItem('yt_member_notes');
-            return data ? JSON.parse(data) : memoryStorage.notes;
-        } catch (e) {
-            return memoryStorage.notes;
-        }
-    }
-
-    function saveMemberNotes(notes) {
-        memoryStorage.notes = notes;
-        try {
-            localStorage.setItem('yt_member_notes', JSON.stringify(notes));
-        } catch (e) {}
-    }
-
-    // 關鍵修復：判斷當前查看的月份，是否落在成員任何一筆紀錄的 [startDate ~ endDate] 範圍內！
     function getMemberPaymentStatusForMonth(memberId, year, month) {
-        var records = getAllRecords();
-        var currentCycleStart = formatDateStr(year, month, 7); // 當月週期開始 7號
+        var records = cloudData.records || [];
+        var currentCycleStart = formatDateStr(year, month, 7);
 
         for (var i = 0; i < records.length; i++) {
             var rec = records[i];
             if (rec.memberId === memberId && rec.startDate && rec.endDate) {
-                // 只要當月的 7 號 <= 方案的結束日期，且 >= 方案開始日期，就代表這筆紀錄涵蓋了當月！
                 if (currentCycleStart >= rec.startDate && currentCycleStart <= rec.endDate) {
                     return rec;
                 }
@@ -477,7 +469,7 @@
     }
 
     function getLastEndDateForMember(memberId) {
-        var records = getAllRecords();
+        var records = cloudData.records || [];
         var memberRecs = [];
         for (var i = 0; i < records.length; i++) {
             if (records[i].memberId === memberId && records[i].endDate) {
@@ -528,7 +520,7 @@
         container.innerHTML = '';
 
         var paidCount = 0;
-        var allNotes = getMemberNotes();
+        var allNotes = cloudData.notes || {};
 
         for (var i = 0; i < members.length; i++) {
             var member = members[i];
@@ -594,7 +586,7 @@
 
         if (isPaid && recordId) {
             editingRecordId = String(recordId);
-            var records = getAllRecords();
+            var records = cloudData.records || [];
             var rec = null;
             for (var j = 0; j < records.length; j++) {
                 if (String(records[j].id) === editingRecordId) { rec = records[j]; break; }
@@ -638,51 +630,43 @@
     function savePayment() {
         if (!activeMemberId) return;
 
-        var records = getAllRecords();
         var payDate = document.getElementById('input-pay-date').value;
         var amount = document.getElementById('input-amount').value;
         var startDate = document.getElementById('input-start-date').value;
         var endDate = document.getElementById('input-end-date').value;
 
-        if (editingRecordId) {
-            for (var i = 0; i < records.length; i++) {
-                if (String(records[i].id) === editingRecordId) {
-                    records[i].payDate = payDate;
-                    records[i].amount = amount;
-                    records[i].startDate = startDate;
-                    records[i].endDate = endDate;
-                    break;
-                }
-            }
-        } else {
-            records.push({
-                id: String(Date.now()),
-                memberId: activeMemberId,
-                payDate: payDate,
-                amount: amount,
-                startDate: startDate,
-                endDate: endDate
-            });
-        }
+        var recId = editingRecordId ? editingRecordId : String(Date.now());
+        var recordPayload = {
+            id: recId,
+            memberId: activeMemberId,
+            payDate: payDate,
+            amount: amount,
+            startDate: startDate,
+            endDate: endDate
+        };
 
-        saveAllRecords(records);
+        document.getElementById('sync-status').innerText = "⏳ 儲存至雲端...";
         closePayModal();
-        renderList();
+
+        fetch(API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: "saveRecord", record: recordPayload })
+        })
+        .then(() => fetchCloudData());
     }
 
     function deleteCurrentRecord() {
         if (!editingRecordId) return;
         if (confirm('確定要刪除這筆繳費紀錄嗎？')) {
-            var records = getAllRecords();
-            var newRecords = [];
-            for (var i = 0; i < records.length; i++) {
-                if (String(records[i].id) !== editingRecordId) {
-                    newRecords.push(records[i]);
-                }
-            }
-            saveAllRecords(newRecords);
+            document.getElementById('sync-status').innerText = "⏳ 自雲端刪除...";
+            var recId = editingRecordId;
             closePayModal();
-            renderList();
+
+            fetch(API_URL, {
+                method: 'POST',
+                body: JSON.stringify({ action: "deleteRecord", id: recId })
+            })
+            .then(() => fetchCloudData());
         }
     }
 
@@ -698,7 +682,7 @@
             return;
         }
         activeNoteMemberId = memberId;
-        var allNotes = getMemberNotes();
+        var allNotes = cloudData.notes || {};
         document.getElementById('note-modal-title').innerText = '編輯 ' + memberName + ' 的個人備註';
         document.getElementById('input-member-note').value = allNotes[memberId] || '';
         document.getElementById('modal-note-overlay').style.display = 'flex';
@@ -713,17 +697,15 @@
         if (!activeNoteMemberId) return;
 
         var noteText = document.getElementById('input-member-note').value.trim();
-        var allNotes = getMemberNotes();
-
-        if (noteText) {
-            allNotes[activeNoteMemberId] = noteText;
-        } else {
-            delete allNotes[activeNoteMemberId];
-        }
-
-        saveMemberNotes(allNotes);
+        document.getElementById('sync-status').innerText = "⏳ 儲存備註至雲端...";
+        var mId = activeNoteMemberId;
         closeMemberNoteModal();
-        renderList();
+
+        fetch(API_URL, {
+            method: 'POST',
+            body: JSON.stringify({ action: "saveNote", memberId: mId, note: noteText })
+        })
+        .then(() => fetchCloudData());
     }
 
     function changeMonth(delta) {
@@ -736,7 +718,7 @@
         renderList();
     }
 
-    renderList();
+    fetchCloudData();
 </script>
 
 </body>
