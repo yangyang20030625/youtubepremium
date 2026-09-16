@@ -431,26 +431,65 @@
     function formatDateStr(y, m, d) { return y + '-' + pad(m) + '-' + pad(d); }
     function formatDate(d) { return formatDateStr(d.getFullYear(), d.getMonth() + 1, d.getDate()); }
 
+    function getLocalBackup() {
+        try {
+            var recs = JSON.parse(localStorage.getItem('yt_global_records')) || [];
+            var nts = JSON.parse(localStorage.getItem('yt_member_notes')) || {};
+            return { records: recs, notes: nts };
+        } catch (e) {
+            return { records: [], notes: {} };
+        }
+    }
+
     function fetchCloudData() {
         document.getElementById('sync-status').innerText = "☁️ 讀取雲端資料...";
-        if (!API_URL) {
-            document.getElementById('sync-status').innerText = "⚠️ 未設定雲端資料庫 URL";
-            renderList();
-            return;
-        }
 
         fetch(API_URL)
             .then(res => res.json())
             .then(data => {
-                cloudData = data;
-                document.getElementById('sync-status').innerText = "✅ 雲端連線正常";
-                renderList();
+                var local = getLocalBackup();
+                // 如果雲端尚無資料，但本機有舊紀錄，自動將本機舊紀錄同步上雲端
+                if ((!data.records || data.records.length === 0) && local.records.length > 0) {
+                    document.getElementById('sync-status').innerText = "🔄 正在備份舊紀錄至雲端...";
+                    syncLocalToCloud(local);
+                } else {
+                    cloudData = data;
+                    document.getElementById('sync-status').innerText = "✅ 雲端連線正常";
+                    renderList();
+                }
             })
             .catch(err => {
                 console.error(err);
-                document.getElementById('sync-status').innerText = "❌ 雲端同步失敗";
+                cloudData = getLocalBackup(); // 網路有問題時降級讀本機
+                document.getElementById('sync-status').innerText = "⚠️ 離線模式（本機紀錄）";
                 renderList();
             });
+    }
+
+    function syncLocalToCloud(local) {
+        var promises = [];
+        for (var i = 0; i < local.records.length; i++) {
+            var rec = local.records[i];
+            var query = "action=saveRecord&id=" + encodeURIComponent(rec.id) +
+                        "&memberId=" + encodeURIComponent(rec.memberId) +
+                        "&payDate=" + encodeURIComponent(rec.payDate) +
+                        "&amount=" + encodeURIComponent(rec.amount) +
+                        "&startDate=" + encodeURIComponent(rec.startDate) +
+                        "&endDate=" + encodeURIComponent(rec.endDate);
+            promises.push(fetch(API_URL + "?" + query));
+        }
+        for (var mId in local.notes) {
+            var nQuery = "action=saveNote&memberId=" + encodeURIComponent(mId) +
+                        "&note=" + encodeURIComponent(local.notes[mId]);
+            promises.push(fetch(API_URL + "?" + nQuery));
+        }
+        Promise.all(promises).then(() => {
+            fetch(API_URL).then(res => res.json()).then(data => {
+                cloudData = data;
+                document.getElementById('sync-status').innerText = "✅ 舊資料已成功同步上雲端";
+                renderList();
+            });
+        });
     }
 
     function getMemberPaymentStatusForMonth(memberId, year, month) {
@@ -636,23 +675,26 @@
         var endDate = document.getElementById('input-end-date').value;
 
         var recId = editingRecordId ? editingRecordId : String(Date.now());
-        var recordPayload = {
-            id: recId,
-            memberId: activeMemberId,
-            payDate: payDate,
-            amount: amount,
-            startDate: startDate,
-            endDate: endDate
-        };
-
+        
         document.getElementById('sync-status').innerText = "⏳ 儲存至雲端...";
         closePayModal();
 
-        fetch(API_URL, {
-            method: 'POST',
-            body: JSON.stringify({ action: "saveRecord", record: recordPayload })
-        })
-        .then(() => fetchCloudData());
+        var query = "action=saveRecord" +
+                    "&id=" + encodeURIComponent(recId) +
+                    "&memberId=" + encodeURIComponent(activeMemberId) +
+                    "&payDate=" + encodeURIComponent(payDate) +
+                    "&amount=" + encodeURIComponent(amount) +
+                    "&startDate=" + encodeURIComponent(startDate) +
+                    "&endDate=" + encodeURIComponent(endDate);
+
+        fetch(API_URL + "?" + query)
+            .then(res => res.json())
+            .then(() => fetchCloudData())
+            .catch(err => {
+                console.error(err);
+                alert("寫入失敗，請確認網路連線或 Apps Script 部署設定");
+                fetchCloudData();
+            });
     }
 
     function deleteCurrentRecord() {
@@ -662,11 +704,10 @@
             var recId = editingRecordId;
             closePayModal();
 
-            fetch(API_URL, {
-                method: 'POST',
-                body: JSON.stringify({ action: "deleteRecord", id: recId })
-            })
-            .then(() => fetchCloudData());
+            var query = "action=deleteRecord&id=" + encodeURIComponent(recId);
+            fetch(API_URL + "?" + query)
+                .then(res => res.json())
+                .then(() => fetchCloudData());
         }
     }
 
@@ -701,11 +742,10 @@
         var mId = activeNoteMemberId;
         closeMemberNoteModal();
 
-        fetch(API_URL, {
-            method: 'POST',
-            body: JSON.stringify({ action: "saveNote", memberId: mId, note: noteText })
-        })
-        .then(() => fetchCloudData());
+        var query = "action=saveNote&memberId=" + encodeURIComponent(mId) + "&note=" + encodeURIComponent(noteText);ㄋ
+        fetch(API_URL + "?" + query)
+            .then(res => res.json())
+            .then(() => fetchCloudData());
     }
 
     function changeMonth(delta) {
